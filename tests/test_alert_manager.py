@@ -98,3 +98,67 @@ def test_video_urls_list_override(tmp_path: Path) -> None:
     )
     config = load_config(DEFAULT_CONFIG_PATH, user)
     assert config.alert_manager.deadline_video_urls == ["https://a", "https://b"]
+
+
+class _FakeChannel:
+    """pygame.mixer.Channel yerine: çalan sesi ve durdurma çağrılarını kaydeder."""
+
+    def __init__(self) -> None:
+        self.playing: Path | None = None
+        self.played: list[Path] = []
+        self.stop_count = 0
+
+    def get_busy(self) -> bool:
+        return self.playing is not None
+
+    def stop(self) -> None:
+        self.stop_count += 1
+        self.playing = None
+
+    def play(self, sound: Path, loops: int = 0) -> None:
+        self.playing = sound
+        self.played.append(sound)
+
+    def set_volume(self, _volume: float) -> None:
+        pass
+
+
+@pytest.fixture
+def fake_audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _FakeChannel:
+    config = load_config(DEFAULT_CONFIG_PATH, tmp_path / "yok.json")
+    am._load_settings(config)
+    channel = _FakeChannel()
+    monkeypatch.setattr(am, "_voice_channel", channel)
+    monkeypatch.setattr(am, "_load_sound", lambda path: path)
+    monkeypatch.setattr(am, "_notify", lambda _message: None)
+    monkeypatch.setattr(am, "_alarm_active", False)
+    monkeypatch.setattr(am, "_last_notified_at", {})
+    return channel
+
+
+def test_normal_asleep_interrupts_drowsy_voice(
+    fake_audio: _FakeChannel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(am, "_mode", am.AppMode.NORMAL)
+    am._on_drowsy()
+    assert fake_audio.playing is not None and fake_audio.playing.parent.name == "Drowsy"
+
+    am._on_asleep()  # Drowsy sesi hâlâ "çalıyor"
+    assert fake_audio.stop_count == 1
+    assert fake_audio.playing.parent.name == "normal"
+    assert fake_audio.playing.parent.parent.name == "Sleepy"
+
+
+def test_deadline_video_only_asleep_stops_drowsy_voice(
+    fake_audio: _FakeChannel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(am, "_mode", am.AppMode.DEADLINE)
+    monkeypatch.setattr(am, "_DEADLINE_MEDIA_TYPE", "video_url")
+    monkeypatch.setattr(am, "_DEADLINE_VIDEO_URLS", ["https://a"])
+    monkeypatch.setattr(am, "_DEADLINE_SOUND_WITH_VIDEO", False)
+    monkeypatch.setattr(am.webbrowser, "open", lambda _url: True)
+    am._on_drowsy()
+    assert fake_audio.get_busy()
+
+    am._on_asleep()
+    assert not fake_audio.get_busy()

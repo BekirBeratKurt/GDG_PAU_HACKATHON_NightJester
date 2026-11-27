@@ -225,8 +225,7 @@ def _handle_commands() -> None:
         return
     if command.action == COMMAND_STOP:
         _stop_alarm("kullanıcı 'Uyandım' dedi")
-        if _voice_channel is not None:
-            _voice_channel.stop()
+        _stop_voice()
     elif command.action == COMMAND_TEST:
         log.info("Test alarmı istendi.")
         _start_alarm()
@@ -269,6 +268,8 @@ def _on_drowsy() -> None:
 
 
 def _on_asleep() -> None:
+    # DROWSY sesi hâlâ çalıyor olabilir. Daha ciddi seviyenin sesi onu bastırmalı.
+    _stop_voice()
     if _mode is AppMode.NORMAL:
         if _cooldown_passed(FatigueLevel.ASLEEP):
             _notify(TEXT_ASLEEP)
@@ -328,8 +329,7 @@ def _start_alarm_sound() -> bool:
     sound = _load_sound(_pick_alarm_sound())
     if sound is None or _alarm_channel is None:
         return False
-    if _voice_channel is not None:
-        _voice_channel.stop()
+    _stop_voice()
     _alarm_volume = _VOLUME_START
     _alarm_channel.set_volume(_alarm_volume)
     _alarm_channel.play(sound, loops=LOOP_FOREVER)
@@ -372,6 +372,12 @@ def _stop_alarm(reason: str) -> None:
     _alarm_active = False
     update_device_state(alarm_active=False)
     log.info("Alarm durdu: %s", reason)
+
+
+def _stop_voice() -> None:
+    if _voice_channel is not None and _voice_channel.get_busy():
+        _voice_channel.stop()
+        log.info("Önceki uyarı sesi durduruldu.")
 
 
 def _play_voice(sub_dir: Path) -> None:

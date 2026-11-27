@@ -12,3 +12,4 @@ __pycache__/
 # Kullanıcıya özel ayarlar ve oturum verisi
 config/user_config.json
 data/
+DEMO.md

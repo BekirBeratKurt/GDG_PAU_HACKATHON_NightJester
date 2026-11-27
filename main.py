@@ -47,14 +47,18 @@ def main() -> None:
     ]
     threads = [_start_task(fn, name, stop_event, config) for fn, name in tasks]
 
-    run_ui(stop_event, config)  # ana thread burada bloklanır
-
-    stop_event.set()
-    for thread in threads:
-        thread.join(timeout=THREAD_JOIN_TIMEOUT_SEC)
-        if thread.is_alive():
-            log.warning("%s zamanında durmadı.", thread.name)
-    log.info("Uygulama kapatıldı")
+    try:
+        run_ui(stop_event, config)  # ana thread burada bloklanır
+    except Exception:
+        log.exception("Arayüz beklenmeyen bir hatayla kapandı.")
+    finally:
+        # Arayüz çökse bile kamera serbest bırakılır ve thread'ler durdurulur.
+        stop_event.set()
+        for thread in threads:
+            thread.join(timeout=THREAD_JOIN_TIMEOUT_SEC)
+            if thread.is_alive():
+                log.warning("%s zamanında durmadı.", thread.name)
+        log.info("Uygulama kapatıldı")
 
 
 def _setup_logging() -> None:

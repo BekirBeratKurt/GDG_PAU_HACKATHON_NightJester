@@ -11,6 +11,7 @@ from libs.communicator import orb_advertise, topics
 from libs.config_manager import AppConfig, load_config
 from libs.device_state_tracker import device_state_tracker_task
 from libs.face_analyzer import face_analyzer_task
+from libs.fatigue_detector import fatigue_detector_task
 from libs.ui import run_ui
 
 TAG = "Main"
@@ -36,6 +37,7 @@ def main() -> None:
         (device_state_tracker_task, "device_state_tracker_task"),  # her zaman ilk
         (camera_capture_task, "camera_capture_task"),
         (face_analyzer_task, "face_analyzer_task"),
+        (fatigue_detector_task, "fatigue_detector_task"),
     ]
     threads = [_start_task(fn, name, stop_event, config) for fn, name in tasks]
 

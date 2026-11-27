@@ -9,7 +9,7 @@ import time
 
 import customtkinter as ctk
 
-from libs.communicator import orb_copy, orb_subscribe, topics
+from libs.communicator import orb_copy, orb_publish, orb_subscribe, topics
 from libs.config_manager import AppConfig
 
 from .dashboard import Dashboard
@@ -35,11 +35,14 @@ def run_ui(stop_event: threading.Event, config: AppConfig) -> None:
     ctk.set_appearance_mode(APPEARANCE_MODE)
     root = ctk.CTk()
     root.title(WINDOW_TITLE)
-    dashboard = Dashboard(root, show_landmarks=config.ui.show_landmarks)
+    dashboard = Dashboard(
+        root, show_landmarks=config.ui.show_landmarks, on_calibrate=_request_calibration
+    )
     dashboard.pack(fill="both", expand=True)
 
     frame_sub = orb_subscribe(topics.frame_topic)
     metrics_sub = orb_subscribe(topics.face_metrics_topic)
+    fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
     last_frame_time = time.monotonic()
     camera_lost = False
 
@@ -60,6 +63,9 @@ def run_ui(stop_event: threading.Event, config: AppConfig) -> None:
             dashboard.show_no_camera()
         if metrics_updated:
             dashboard.show_metrics(metrics)
+        fatigue_updated, fatigue_state = orb_copy(fatigue_sub)
+        if fatigue_updated:
+            dashboard.show_state(fatigue_state)
         root.after(UI_PERIOD_MS, tick)
 
     root.protocol("WM_DELETE_WINDOW", stop_event.set)
@@ -71,3 +77,8 @@ def run_ui(stop_event: threading.Event, config: AppConfig) -> None:
     root.mainloop()
     root.destroy()
     log.info("Arayüz kapandı.")
+
+
+def _request_calibration() -> None:
+    log.info("Kullanıcı kalibrasyon istedi.")
+    orb_publish(topics.calibration_request_topic, True)

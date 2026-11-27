@@ -1,4 +1,4 @@
-"""UI modülü: ana pencereyi kurar ve ana thread'de periyodik olarak günceller."""
+"""UI modülü: ana pencereyi ve tray'i kurar, ana thread'de periyodik olarak günceller."""
 
 from __future__ import annotations
 
@@ -12,11 +12,12 @@ from pathlib import Path
 import customtkinter as ctk
 
 from libs.communicator import orb_copy, orb_publish, orb_subscribe, topics
-from libs.communicator.topics import AlertCommand, AppMode, GuardianResult
+from libs.communicator.topics import AlertCommand, AppMode, FatigueLevel, GuardianResult
 from libs.config_manager import AppConfig
-from libs.device_state_tracker import get_device_state
+from libs.device_state_tracker import DeviceError, get_device_state, get_error_mask
 
 from .dashboard import Dashboard, DashboardCallbacks
+from .tray import Tray, TrayCallbacks
 
 TAG = "UI"
 log = logging.getLogger(TAG)
@@ -26,82 +27,157 @@ NO_FRAME_TIMEOUT_SEC = 2.0
 WINDOW_TITLE = "NightJester"
 APPEARANCE_MODE = "dark"
 GUARDIAN_TIME_FORMAT = "%H:%M:%S"
+TEXT_RUNNING_IN_BACKGROUND = (
+    "NightJester arka planda çalışmaya devam ediyor. Açmak için tray ikonuna tıkla."
+)
 
 
 def run_ui(stop_event: threading.Event, config: AppConfig) -> None:
-    """Ana pencereyi açar ve kapanana kadar ana thread'i bloklar.
+    """Ana pencereyi ve tray ikonunu açar, uygulama kapanana kadar ana thread'i bloklar.
 
-    Pencere kapatıldığında veya Ctrl+C'ye basıldığında stop_event set edilir.
+    Pencere kapatılınca uygulama tray'e küçülür. Tray'den "Çıkış" seçilince veya Ctrl+C'ye
+    basılınca stop_event set edilir.
 
     Args:
         stop_event: Uygulama kapanırken set edilen ortak olay.
         config: Uygulama ayarları.
     """
-    ctk.set_appearance_mode(APPEARANCE_MODE)
-    root = ctk.CTk()
-    root.title(WINDOW_TITLE)
-    initial_mode = _parse_mode(config.ui.start_mode)
-    callbacks = DashboardCallbacks(
-        on_calibrate=_request_calibration,
-        on_mode_change=_publish_mode,
-        on_wake=_request_alarm_stop,
-        on_test_alarm=_request_test_alarm,
-    )
-    dashboard = Dashboard(
-        root,
-        show_landmarks=config.ui.show_landmarks,
-        initial_mode=initial_mode,
-        callbacks=callbacks,
-    )
-    dashboard.pack(fill="both", expand=True)
-    dashboard.show_guardian_info(_initial_guardian_text(config))
-    # Başlangıç modu bir kez yayınlanır, böylece tüm modüller aynı modla başlar.
-    _publish_mode(initial_mode)
+    _App(stop_event, config).run()
 
-    frame_sub = orb_subscribe(topics.frame_topic)
-    metrics_sub = orb_subscribe(topics.face_metrics_topic)
-    fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
-    guardian_sub = orb_subscribe(topics.guardian_result_topic)
-    last_frame_time = time.monotonic()
-    camera_lost = False
 
-    def tick() -> None:
-        nonlocal last_frame_time, camera_lost
-        if stop_event.is_set():
-            root.quit()
+class _App:
+    """Pencere, panel ve tray'i bir arada tutar. Tüm metotlar ana thread'de çalışır."""
+
+    def __init__(self, stop_event: threading.Event, config: AppConfig) -> None:
+        self._stop_event = stop_event
+        self._config = config
+        self._mode = _parse_mode(config.ui.start_mode)
+        self._level: FatigueLevel | None = None
+        self._hidden = False
+        self._background_hint_shown = False
+        self._last_frame_time = time.monotonic()
+        self._camera_lost = False
+        # Tray thread'i Tk'ye dokunamaz. İsteği bu olayla bırakır, tick ana thread'de işler.
+        self._show_request = threading.Event()
+
+        ctk.set_appearance_mode(APPEARANCE_MODE)
+        self._root = ctk.CTk()
+        self._root.title(WINDOW_TITLE)
+        self._dashboard = Dashboard(
+            self._root,
+            show_landmarks=config.ui.show_landmarks,
+            initial_mode=self._mode,
+            callbacks=DashboardCallbacks(
+                on_calibrate=_request_calibration,
+                on_mode_change=_publish_mode,
+                on_wake=_request_alarm_stop,
+                on_test_alarm=_request_test_alarm,
+            ),
+        )
+        self._dashboard.pack(fill="both", expand=True)
+        self._dashboard.show_guardian_info(_initial_guardian_text(config))
+
+        self._tray = Tray(
+            self._mode,
+            TrayCallbacks(
+                on_show=self._show_request.set,
+                on_mode_change=_publish_mode,
+                on_wake=_request_alarm_stop,
+                on_exit=stop_event.set,
+            ),
+        )
+
+        self._frame_sub = orb_subscribe(topics.frame_topic)
+        self._metrics_sub = orb_subscribe(topics.face_metrics_topic)
+        self._fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
+        self._guardian_sub = orb_subscribe(topics.guardian_result_topic)
+        self._mode_sub = orb_subscribe(topics.app_mode_topic)
+
+    def run(self) -> None:
+        """Tray'i başlatır ve Tk ana döngüsünü çalıştırır."""
+        tray_ok = self._tray.start()
+        if tray_ok:
+            self._root.protocol("WM_DELETE_WINDOW", self._hide_window)
+        else:
+            log.warning("Tray yok, pencere kapatılınca uygulama kapanacak.")
+            self._root.protocol("WM_DELETE_WINDOW", self._stop_event.set)
+        # Tk ana döngüsü Ctrl+C'yi kendisi işlemez. Olayı set edip tick'in kapatmasını sağlıyoruz.
+        signal.signal(signal.SIGINT, lambda _signum, _frame: self._stop_event.set())
+
+        # Başlangıç modu bir kez yayınlanır, böylece tüm modüller aynı modla başlar.
+        _publish_mode(self._mode)
+        if tray_ok and self._config.ui.start_minimized:
+            self._hide_window()
+
+        self._root.after(UI_PERIOD_MS, self._tick)
+        log.info("Arayüz açıldı.")
+        try:
+            self._root.mainloop()
+        finally:
+            # Tray thread'i daemon değil. Durdurulmazsa uygulama kapanmaz.
+            self._tray.stop()
+            self._root.destroy()
+            log.info("Arayüz kapandı.")
+
+    def _tick(self) -> None:
+        if self._stop_event.is_set():
+            self._root.quit()
             return
-        frame_updated, frame = orb_copy(frame_sub)
-        metrics_updated, metrics = orb_copy(metrics_sub)
-        now = time.monotonic()
-        if frame_updated:
-            last_frame_time = now
-            camera_lost = False
-            dashboard.show_frame(frame.image, metrics)
-        elif not camera_lost and now - last_frame_time > NO_FRAME_TIMEOUT_SEC:
-            camera_lost = True
-            dashboard.show_no_camera()
-        if metrics_updated:
-            dashboard.show_metrics(metrics)
-        fatigue_updated, fatigue_state = orb_copy(fatigue_sub)
+        if self._show_request.is_set():
+            self._show_request.clear()
+            self._show_window()
+
+        self._update_mode()
+        self._update_preview()
+        fatigue_updated, fatigue_state = orb_copy(self._fatigue_sub)
         if fatigue_updated:
-            dashboard.show_state(fatigue_state)
-        guardian_updated, guardian_result = orb_copy(guardian_sub)
+            self._level = fatigue_state.level
+            self._dashboard.show_state(fatigue_state)
+        guardian_updated, guardian_result = orb_copy(self._guardian_sub)
         if guardian_updated and isinstance(guardian_result, GuardianResult):
-            dashboard.show_guardian_info(
+            self._dashboard.show_guardian_info(
                 _guardian_result_text(guardian_result), ok=guardian_result.success
             )
-        dashboard.show_alarm_active(get_device_state().alarm_active)
-        root.after(UI_PERIOD_MS, tick)
+        self._dashboard.show_alarm_active(get_device_state().alarm_active)
+        self._tray.update(self._level, self._mode, get_error_mask() != DeviceError.NO_ERROR)
+        self._root.after(UI_PERIOD_MS, self._tick)
 
-    root.protocol("WM_DELETE_WINDOW", stop_event.set)
-    # Tk ana döngüsü Ctrl+C'yi kendisi işlemez. Olayı set edip tick'in kapatmasını sağlıyoruz.
-    signal.signal(signal.SIGINT, lambda _signum, _frame: stop_event.set())
+    def _update_mode(self) -> None:
+        updated, mode = orb_copy(self._mode_sub)
+        if updated and isinstance(mode, AppMode) and mode is not self._mode:
+            self._mode = mode
+            self._dashboard.set_mode(mode)
 
-    root.after(UI_PERIOD_MS, tick)
-    log.info("Arayüz açıldı.")
-    root.mainloop()
-    root.destroy()
-    log.info("Arayüz kapandı.")
+    def _update_preview(self) -> None:
+        frame_updated, frame = orb_copy(self._frame_sub)
+        metrics_updated, metrics = orb_copy(self._metrics_sub)
+        now = time.monotonic()
+        if frame_updated:
+            self._last_frame_time = now
+            self._camera_lost = False
+            # Pencere gizliyken kare çizmek boşa CPU harcar.
+            if not self._hidden:
+                self._dashboard.show_frame(frame.image, metrics)
+        elif not self._camera_lost and now - self._last_frame_time > NO_FRAME_TIMEOUT_SEC:
+            self._camera_lost = True
+            self._dashboard.show_no_camera()
+        if metrics_updated:
+            self._dashboard.show_metrics(metrics)
+
+    def _hide_window(self) -> None:
+        self._root.withdraw()
+        self._hidden = True
+        log.info("Pencere gizlendi, uygulama arka planda çalışıyor.")
+        if not self._background_hint_shown:
+            self._background_hint_shown = True
+            self._tray.notify(TEXT_RUNNING_IN_BACKGROUND)
+
+    def _show_window(self) -> None:
+        self._root.deiconify()
+        self._root.lift()
+        self._root.focus_force()
+        self._hidden = False
+        log.info("Pencere gösterildi.")
 
 
 def _request_calibration() -> None:
@@ -115,7 +191,7 @@ def _publish_mode(mode: AppMode) -> None:
 
 
 def _request_alarm_stop() -> None:
-    log.info("Kullanıcı 'Uyandım' butonuna bastı.")
+    log.info("Kullanıcı 'Uyandım' dedi.")
     orb_publish(topics.alert_command_topic, AlertCommand(action="stop"))
 
 

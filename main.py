@@ -6,15 +6,17 @@ import logging
 import threading
 from collections.abc import Callable
 
+from libs.camera_capture import camera_capture_task
 from libs.communicator import orb_advertise, topics
 from libs.config_manager import AppConfig, load_config
 from libs.device_state_tracker import device_state_tracker_task
+from libs.face_analyzer import face_analyzer_task
+from libs.ui import run_ui
 
 TAG = "Main"
 log = logging.getLogger(TAG)
 
 THREAD_JOIN_TIMEOUT_SEC = 2.0
-MAIN_WAIT_PERIOD_SEC = 0.5
 LOG_FORMAT = "%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s"
 LOG_DATE_FORMAT = "%H:%M:%S"
 
@@ -32,10 +34,12 @@ def main() -> None:
     stop_event = threading.Event()
     tasks: list[tuple[TaskFunction, str]] = [
         (device_state_tracker_task, "device_state_tracker_task"),  # her zaman ilk
+        (camera_capture_task, "camera_capture_task"),
+        (face_analyzer_task, "face_analyzer_task"),
     ]
     threads = [_start_task(fn, name, stop_event, config) for fn, name in tasks]
 
-    _wait_until_stopped(stop_event)
+    run_ui(stop_event, config)  # ana thread burada bloklanır
 
     stop_event.set()
     for thread in threads:
@@ -68,16 +72,6 @@ def _start_task(
     thread.start()
     log.info("%s başlatıldı", name)
     return thread
-
-
-def _wait_until_stopped(stop_event: threading.Event) -> None:
-    # Geçici: Faz_2'de UI gelince ana thread run_ui içinde bloklanacak.
-    log.info("Kapatmak için Ctrl+C'ye bas.")
-    try:
-        while not stop_event.wait(MAIN_WAIT_PERIOD_SEC):
-            pass
-    except KeyboardInterrupt:
-        log.info("Ctrl+C alındı, kapatılıyor.")
 
 
 if __name__ == "__main__":

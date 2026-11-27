@@ -532,10 +532,13 @@ def _load_settings(cfg: FatigueConfig) -> None:
   },
   "alert_manager": {
     "normal_mode_cooldown_sec": 600,
+    "voice_dir": "def_voice_files",
+    "voice_gender": "female",
     "deadline_media_type": "sound",
-    "deadline_sound_path": "assets/sounds/alarm.wav",
-    "deadline_video_url": "",
+    "deadline_sound_path": "",
+    "deadline_video_urls": [],
     "deadline_video_path": "",
+    "deadline_sound_with_video": false,
     "volume_start": 0.4,
     "volume_step": 0.15,
     "volume_step_interval_sec": 5.0
@@ -728,9 +731,15 @@ CALIBRATING ───────────────────► AWAKE
 
 | Seviye | Normal mod | Deadline modu |
 |---|---|---|
-| DROWSY | Bildirim: "Yorgun görünüyorsun, 5 dk mola?" (cooldown) | Kısa uyarı sesi |
-| ASLEEP | Bildirim: "Uyumak verimlilik için en iyi yatırım" (cooldown) | Seçilen medya oynatılır. Ses seviyesi kademeli artar. Kod Koruyucu tetiklenir. |
-| AWAKE'e dönüş | — | Ses durur. "Hoş geldin, kodun güvende" bildirimi. |
+| DROWSY | Bildirim: "Yorgun görünüyorsun, 5 dk mola?" + `Drowsy/` sesi (cooldown) | Aynı `Drowsy/` sesi (bildirimsiz) |
+| ASLEEP | Bildirim: "Uyumak verimlilik için en iyi yatırım" + `Sleepy/normal/` sesi (cooldown) | Seçilen medya oynatılır. Ses seviyesi kademeli artar. Kod Koruyucu tetiklenir. |
+| AWAKE'e dönüş | — | Ses durur. "Hoş geldin" bildirimi (Faz_5'ten sonra: "kodun güvende"). |
+
+**Ses dosyaları** (`voice_dir` / `voice_gender`): `def_voice_files/<female|male>/Drowsy/`, `.../Sleepy/normal/`, `.../Sleepy/deadline/`. Her klasördeki `.wav/.ogg/.mp3` dosyalarından **rastgele** biri çalınır, klasöre dosya eklemek yeterlidir. (`.m4a` pygame tarafından desteklenmez, `.ogg`'ye çevrilmelidir. Çevrilmemiş dosya varsa açılışta log'a uyarı yazılır.)
+
+**Deadline alarm sesi seçim sırası:** `deadline_sound_path` (doluysa) → `Sleepy/deadline/` içinden rastgele → `Sleepy/normal/` içinden rastgele.
+
+**Deadline medya tipi** (`deadline_media_type`): `sound` | `video_url` (`deadline_video_urls` listesinden **rastgele** bir link tarayıcıda açılır) | `video_file` (`deadline_video_path`). Varsayılan olarak (`deadline_sound_with_video: false`) **sadece** video açılır. `true` yapılırsa video ile birlikte alarm sesi de çalar. Video açılamazsa (liste boş, dosya yok, tarayıcı açılmadı) uyandırma garanti olsun diye alarm sesi çalar.
 
 ---
 
@@ -971,3 +980,6 @@ Zaman daralırsa **sondan başa** doğru kesilir:
 | 7 | **Takım:** Tek kişi geliştiriyor. Fazlar sırayla uygulanır. | **Karar verildi** |
 | 8 | **Skor formülü** ağırlıkları implementasyonda belirlenecek, demo ortamında ayarlanacak. | Açık |
 | 9 | **Klavye/fare aktivitesi kullanılmıyor:** Kafa klavyeye düşebileceği için aktivite verisi uyku tespitinde güvenilir değil. Ayrıca geliştirme süresi kısalıyor. Aşağı bakarken oluşabilecek yanlış alarmlar kalibrasyon ve süre eşikleriyle yönetilir. | **Karar verildi** |
+| 10 | **Varsayılan sesler:** `assets/sounds/alarm.wav` yerine kullanıcının hazırladığı `def_voice_files/` (kadın/erkek, Drowsy/Sleepy) kullanılır. DROWSY sesi iki modda aynıdır. Video linkleri rastgele seçilen bir listedir. | **Karar verildi** |
+| 11 | **Video ile birlikte ses:** Video/link seçiliyse sadece video açılır (`deadline_sound_with_video` varsayılan `false`). Video açılamazsa yedek olarak alarm sesi çalar. | **Karar verildi** |
+| 12 | **Test alarmı** sadece "Uyandım" ile (veya ASLEEP → AWAKE geçişiyle) durur. Mod Normal/Duraklat'a alınınca alarm durur. Deadline'da DROWSY sesi için cooldown yoktur. | **Varsayım**, onayla |

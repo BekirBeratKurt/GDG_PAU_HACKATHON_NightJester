@@ -59,10 +59,13 @@ class AlertConfig:
     """Uyarı ayarları."""
 
     normal_mode_cooldown_sec: int
+    voice_dir: str
+    voice_gender: str
     deadline_media_type: str
     deadline_sound_path: str
-    deadline_video_url: str
+    deadline_video_urls: list[str]
     deadline_video_path: str
+    deadline_sound_with_video: bool
     volume_start: float
     volume_step: float
     volume_step_interval_sec: float

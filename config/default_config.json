@@ -23,10 +23,13 @@
   },
   "alert_manager": {
     "normal_mode_cooldown_sec": 600,
+    "voice_dir": "def_voice_files",
+    "voice_gender": "female",
     "deadline_media_type": "sound",
-    "deadline_sound_path": "assets/sounds/alarm.wav",
-    "deadline_video_url": "",
+    "deadline_sound_path": "",
+    "deadline_video_urls": [],
     "deadline_video_path": "",
+    "deadline_sound_with_video": false,
     "volume_start": 0.4,
     "volume_step": 0.15,
     "volume_step_interval_sec": 5.0

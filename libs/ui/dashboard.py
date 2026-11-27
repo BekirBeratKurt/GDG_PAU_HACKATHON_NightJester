@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import customtkinter as ctk
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
-from libs.communicator.topics import FaceMetrics, FatigueLevel, FatigueState
+from libs.communicator.topics import AppMode, FaceMetrics, FatigueLevel, FatigueState
 
 PADDING_PX = 10
 PREVIEW_BG = "#1a1a1a"
@@ -28,7 +29,17 @@ TEXT_WAITING_ANALYSIS = "Yüz analizi bekleniyor…"
 TEXT_NO_FACE = "Yüz algılanmadı"
 TEXT_WAITING_STATE = "Durum bekleniyor…"
 TEXT_CALIBRATE_BUTTON = "Kalibre et"
+TEXT_TEST_ALARM_BUTTON = "Test alarmı"
+TEXT_WAKE_BUTTON = "Uyandım"
 TEXT_CALIBRATING_HINT = "Ekrana normal şekilde bak, gözlerini açık tut."
+
+MODE_LABELS: dict[AppMode, str] = {
+    AppMode.NORMAL: "Normal",
+    AppMode.DEADLINE: "Deadline",
+    AppMode.PAUSED: "Duraklat",
+}
+WAKE_BUTTON_ALARM_COLOR = "#c0392b"
+WAKE_BUTTON_ALARM_HOVER_COLOR = "#a93226"
 
 # Seviye → (etiket, renk)
 LEVEL_DISPLAY: dict[FatigueLevel, tuple[str, str]] = {
@@ -41,22 +52,46 @@ LEVEL_DISPLAY: dict[FatigueLevel, tuple[str, str]] = {
 DEFAULT_TEXT_COLOR = "#dcdcdc"
 
 
+@dataclass
+class DashboardCallbacks:
+    """Panel butonlarına basılınca çağrılacak fonksiyonlar."""
+
+    on_calibrate: Callable[[], None]
+    on_mode_change: Callable[[AppMode], None]
+    on_wake: Callable[[], None]
+    on_test_alarm: Callable[[], None]
+
+
 class Dashboard(ctk.CTkFrame):
-    """Ana paneldeki önizleme ve ölçüm alanı. Sadece ana thread'den çağrılır."""
+    """Ana paneldeki önizleme, ölçüm ve kontrol alanı. Sadece ana thread'den çağrılır."""
 
     def __init__(
-        self, master: ctk.CTk, show_landmarks: bool, on_calibrate: Callable[[], None]
+        self,
+        master: ctk.CTk,
+        show_landmarks: bool,
+        initial_mode: AppMode,
+        callbacks: DashboardCallbacks,
     ) -> None:
         """Paneli oluşturur.
 
         Args:
             master: Ana pencere.
             show_landmarks: Göz ve ağız noktaları önizlemeye çizilsin mi.
-            on_calibrate: "Kalibre et" butonuna basılınca çağrılır.
+            initial_mode: Mod anahtarının başlangıç değeri.
+            callbacks: Buton fonksiyonları.
         """
         super().__init__(master)
         self._show_landmarks = show_landmarks
         self._photo: ImageTk.PhotoImage | None = None
+        self._alarm_shown = False
+        self._label_to_mode = {label: mode for mode, label in MODE_LABELS.items()}
+        self._on_mode_change = callbacks.on_mode_change
+
+        self._mode_switch = ctk.CTkSegmentedButton(
+            self, values=list(MODE_LABELS.values()), command=self._handle_mode_selected
+        )
+        self._mode_switch.set(MODE_LABELS[initial_mode])
+        self._mode_switch.pack(padx=PADDING_PX, pady=(PADDING_PX, 0))
 
         self._status_label = ctk.CTkLabel(
             self,
@@ -83,10 +118,46 @@ class Dashboard(ctk.CTkFrame):
         )
         self._metrics_label.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
 
-        self._calibrate_button = ctk.CTkButton(
-            self, text=TEXT_CALIBRATE_BUTTON, command=on_calibrate
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
+        ctk.CTkButton(buttons, text=TEXT_CALIBRATE_BUTTON, command=callbacks.on_calibrate).pack(
+            side="left", padx=PADDING_PX
         )
-        self._calibrate_button.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
+        ctk.CTkButton(buttons, text=TEXT_TEST_ALARM_BUTTON, command=callbacks.on_test_alarm).pack(
+            side="left", padx=PADDING_PX
+        )
+        self._wake_button = ctk.CTkButton(buttons, text=TEXT_WAKE_BUTTON, command=callbacks.on_wake)
+        self._wake_button.pack(side="left", padx=PADDING_PX)
+        self._wake_default_colors = (
+            self._wake_button.cget("fg_color"),
+            self._wake_button.cget("hover_color"),
+        )
+
+    def set_mode(self, mode: AppMode) -> None:
+        """Mod anahtarını dışarıdan (ör. tray) gelen moda ayarlar.
+
+        Args:
+            mode: Gösterilecek mod.
+        """
+        self._mode_switch.set(MODE_LABELS[mode])
+
+    def show_alarm_active(self, active: bool) -> None:
+        """Alarm çalarken "Uyandım" butonunu kırmızı yapar.
+
+        Args:
+            active: Alarm çalıyor mu.
+        """
+        if active == self._alarm_shown:
+            return
+        self._alarm_shown = active
+        if active:
+            colors = (WAKE_BUTTON_ALARM_COLOR, WAKE_BUTTON_ALARM_HOVER_COLOR)
+        else:
+            colors = self._wake_default_colors
+        self._wake_button.configure(fg_color=colors[0], hover_color=colors[1])
+
+    def _handle_mode_selected(self, label: str) -> None:
+        self._on_mode_change(self._label_to_mode[label])
 
     def show_state(self, state: FatigueState | None) -> None:
         """Yorgunluk seviyesini renkli etiketle ve ayrıntılarını gösterir.

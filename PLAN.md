@@ -654,7 +654,7 @@ __all__ = ["<modul>_task"]
 | `camera_capture` | Kamerayı açar, çözünürlüğü ayarlar, frame'i yatay çevirir (ayna) | — | `FRAME` |
 | `face_analyzer` | FaceLandmarker'ı **VIDEO** modunda çalıştırır (`detect_for_video`, artan timestamp). EAR, MAR, yüz var/yok hesaplar. | `FRAME` | `FACE_METRICS` |
 | `fatigue_detector` | Kalibrasyon, kayan pencere (PERCLOS), esneme sayacı, durum makinesi | `FACE_METRICS`, `APP_MODE`, `CALIBRATION_REQUEST`, `CONFIG_UPDATED` | `FATIGUE_STATE` |
-| `alert_manager` | Moda göre bildirim / ses (artan ses seviyesi) / video linki / lokal video. Cooldown, durdurma komutu. | `FATIGUE_STATE`, `APP_MODE`, `ALERT_COMMAND`, `CONFIG_UPDATED` | — (`DeviceState.alarm_active` günceller) |
+| `alert_manager` | Moda göre bildirim / ses (artan ses seviyesi) / video linki / lokal video. Cooldown, durdurma komutu. | `FATIGUE_STATE`, `APP_MODE`, `ALERT_COMMAND`, `GUARDIAN_RESULT`, `CONFIG_UPDATED` | — (`DeviceState.alarm_active` günceller) |
 | `code_guardian` | Deadline modunda `ASLEEP` geçişinde repo(lar)da değişiklik varsa snapshot alır | `FATIGUE_STATE`, `APP_MODE`, `CONFIG_UPDATED` | `GUARDIAN_RESULT` |
 | `session_logger` | Seviye geçişlerini ve guardian sonuçlarını SQLite'a yazar, `get_hourly_report()` sağlar | `FATIGUE_STATE`, `GUARDIAN_RESULT` | — |
 | `ui` | Panel (önizleme + overlay, EAR grafiği, durum, mod anahtarı, "Uyandım", "Kalibre et", "Test alarmı"), ayarlar ekranı, rapor, tray | `FRAME`, `FACE_METRICS`, `FATIGUE_STATE`, `GUARDIAN_RESULT` | `APP_MODE`, `ALERT_COMMAND`, `CALIBRATION_REQUEST`, `CONFIG_UPDATED` |
@@ -982,4 +982,6 @@ Zaman daralırsa **sondan başa** doğru kesilir:
 | 9 | **Klavye/fare aktivitesi kullanılmıyor:** Kafa klavyeye düşebileceği için aktivite verisi uyku tespitinde güvenilir değil. Ayrıca geliştirme süresi kısalıyor. Aşağı bakarken oluşabilecek yanlış alarmlar kalibrasyon ve süre eşikleriyle yönetilir. | **Karar verildi** |
 | 10 | **Varsayılan sesler:** `assets/sounds/alarm.wav` yerine kullanıcının hazırladığı `def_voice_files/` (kadın/erkek, Drowsy/Sleepy) kullanılır. DROWSY sesi iki modda aynıdır. Video linkleri rastgele seçilen bir listedir. | **Karar verildi** |
 | 11 | **Video ile birlikte ses:** Video/link seçiliyse sadece video açılır (`deadline_sound_with_video` varsayılan `false`). Video açılamazsa yedek olarak alarm sesi çalar. | **Karar verildi** |
-| 12 | **Test alarmı** sadece "Uyandım" ile (veya ASLEEP → AWAKE geçişiyle) durur. Mod Normal/Duraklat'a alınınca alarm durur. Deadline'da DROWSY sesi için cooldown yoktur. | **Varsayım**, onayla |
+| 12 | **Test alarmı** sadece "Uyandım" ile (veya ASLEEP → AWAKE geçişiyle) durur. Mod Normal/Duraklat'a alınınca alarm durur. Deadline'da DROWSY sesi için cooldown yoktur. | **Karar verildi** |
+| 13 | **"Kodun güvende" bildirimi:** `alert_manager` da `GUARDIAN_RESULT` dinler. Uyanışta tüm repolar başarılıysa "Hoş geldin, kodun güvende", biri başarısızsa "Kod yedeği alınamadı" bildirimi gelir. "Değişiklik yok" da başarılı sayılır (kod zaten commit'li). | **Varsayım**, onayla |
+| 14 | **Kod Koruyucu bekleme süresi** (`min_interval_sec`) repo başına tutulur. Takip edilmeyen dosyalar yedeğe girmez, bu durumda log ve UI'da belirtilir. | **Varsayım**, onayla |

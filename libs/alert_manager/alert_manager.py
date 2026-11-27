@@ -14,7 +14,7 @@ import pygame
 from plyer import notification
 
 from libs.communicator import orb_copy, orb_subscribe, topics
-from libs.communicator.topics import AlertCommand, AppMode, FatigueLevel
+from libs.communicator.topics import AlertCommand, AppMode, FatigueLevel, GuardianResult
 from libs.config_manager import AppConfig, project_path
 from libs.device_state_tracker import (
     DeviceError,
@@ -48,6 +48,8 @@ APP_NAME = "NightJester"
 TEXT_DROWSY = "Yorgun görünüyorsun, 5 dk mola?"
 TEXT_ASLEEP = "Uyumak verimlilik için en iyi yatırım."
 TEXT_WELCOME = "Hoş geldin! Alarm durduruldu."
+TEXT_WELCOME_CODE_SAFE = "Hoş geldin, kodun güvende."
+TEXT_WELCOME_GUARDIAN_FAILED = "Hoş geldin! Kod yedeği alınamadı, log'a bak."
 
 _NORMAL_MODE_COOLDOWN_SEC: float = 0.0
 _VOICE_ROOT: Path = Path()
@@ -63,6 +65,7 @@ _VOLUME_STEP_INTERVAL_SEC: float = 0.0
 _fatigue_sub = None
 _app_mode_sub = None
 _alert_command_sub = None
+_guardian_sub = None
 _audio_ok = False
 _alarm_channel: pygame.mixer.Channel | None = None
 _voice_channel: pygame.mixer.Channel | None = None
@@ -74,6 +77,8 @@ _last_notified_at: dict[FatigueLevel, float] = {}
 _alarm_active = False
 _alarm_volume = 0.0
 _next_volume_step_at = 0.0
+# Son uyku anında Kod Koruyucu sonuçları: None = sonuç yok.
+_guardian_ok: bool | None = None
 
 
 def alert_manager_task(stop_event: threading.Event, config: AppConfig) -> None:
@@ -90,6 +95,7 @@ def alert_manager_task(stop_event: threading.Event, config: AppConfig) -> None:
         while not stop_event.is_set():
             _handle_mode()
             _handle_commands()
+            _handle_guardian_results()
             _handle_fatigue()
             _update_alarm_volume()
             stop_event.wait(LOOP_PERIOD_SEC)
@@ -119,11 +125,12 @@ def pick_random_audio_file(directory: Path) -> Path | None:
 
 
 def _init(config: AppConfig) -> None:
-    global _fatigue_sub, _app_mode_sub, _alert_command_sub
+    global _fatigue_sub, _app_mode_sub, _alert_command_sub, _guardian_sub
     _load_settings(config)
     _fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
     _app_mode_sub = orb_subscribe(topics.app_mode_topic)
     _alert_command_sub = orb_subscribe(topics.alert_command_topic)
+    _guardian_sub = orb_subscribe(topics.guardian_result_topic)
     update_device_state(alarm_active=False)
 
     if _init_audio() and _check_voice_files():
@@ -201,11 +208,12 @@ def _check_voice_files() -> bool:
 
 
 def _handle_mode() -> None:
-    global _mode
+    global _mode, _guardian_ok
     updated, mode = orb_copy(_app_mode_sub)
     if not updated or not isinstance(mode, AppMode) or mode is _mode:
         return
     _mode = mode
+    _guardian_ok = None
     log.info("Mod: %s", mode.name)
     if mode is not AppMode.DEADLINE:
         _stop_alarm("mod değişti")
@@ -224,6 +232,15 @@ def _handle_commands() -> None:
         _start_alarm()
     else:
         log.warning("Bilinmeyen uyarı komutu: %s", command.action)
+
+
+def _handle_guardian_results() -> None:
+    global _guardian_ok
+    updated, result = orb_copy(_guardian_sub)
+    if not updated or not isinstance(result, GuardianResult):
+        return
+    # Birden çok repo varsa biri bile başarısızsa "güvende" denmez.
+    _guardian_ok = result.success if _guardian_ok is None else _guardian_ok and result.success
 
 
 def _handle_fatigue() -> None:
@@ -261,11 +278,19 @@ def _on_asleep() -> None:
 
 
 def _on_wake_up() -> None:
-    if _mode is AppMode.DEADLINE:
-        was_active = _alarm_active
-        _stop_alarm("kullanıcı uyandı")
-        if was_active:
-            _notify(TEXT_WELCOME)
+    global _guardian_ok
+    if _mode is not AppMode.DEADLINE:
+        return
+    was_active = _alarm_active
+    _stop_alarm("kullanıcı uyandı")
+    if _guardian_ok is True:
+        _notify(TEXT_WELCOME_CODE_SAFE)
+    elif _guardian_ok is False:
+        _notify(TEXT_WELCOME_GUARDIAN_FAILED)
+    elif was_active:
+        _notify(TEXT_WELCOME)
+    # Sonuç uyanışta tüketilir. Uyku anında sıfırlamak, erken gelen sonucu kaybettirebilirdi.
+    _guardian_ok = None
 
 
 def _cooldown_passed(level: FatigueLevel) -> bool:

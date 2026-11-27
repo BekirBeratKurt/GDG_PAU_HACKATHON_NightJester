@@ -38,6 +38,8 @@ MODE_LABELS: dict[AppMode, str] = {
     AppMode.DEADLINE: "Deadline",
     AppMode.PAUSED: "Duraklat",
 }
+GUARDIAN_WRAP_PX = 620
+GUARDIAN_ERROR_COLOR = "#e04040"
 WAKE_BUTTON_ALARM_COLOR = "#c0392b"
 WAKE_BUTTON_ALARM_HOVER_COLOR = "#a93226"
 
@@ -118,6 +120,11 @@ class Dashboard(ctk.CTkFrame):
         )
         self._metrics_label.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
 
+        self._guardian_label = ctk.CTkLabel(
+            self, text="", font=ctk.CTkFont(size=DETAIL_FONT_SIZE), wraplength=GUARDIAN_WRAP_PX
+        )
+        self._guardian_label.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
+
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
         ctk.CTkButton(buttons, text=TEXT_CALIBRATE_BUTTON, command=callbacks.on_calibrate).pack(
@@ -132,6 +139,16 @@ class Dashboard(ctk.CTkFrame):
             self._wake_button.cget("fg_color"),
             self._wake_button.cget("hover_color"),
         )
+
+    def show_guardian_info(self, text: str, ok: bool = True) -> None:
+        """Kod Koruyucu bilgisini (son snapshot veya durum) gösterir.
+
+        Args:
+            text: Gösterilecek metin.
+            ok: False ise metin hata rengiyle gösterilir.
+        """
+        color = DEFAULT_TEXT_COLOR if ok else GUARDIAN_ERROR_COLOR
+        self._guardian_label.configure(text=text, text_color=color)
 
     def set_mode(self, mode: AppMode) -> None:
         """Mod anahtarını dışarıdan (ör. tray) gelen moda ayarlar.

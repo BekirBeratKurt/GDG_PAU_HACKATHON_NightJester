@@ -27,7 +27,7 @@ fatigue_state_topic: OrbTopic | None = None
 app_mode_topic: OrbTopic | None = None  # ui, tray → fatigue_detector, alert_manager, code_guardian
 alert_command_topic: OrbTopic | None = None  # ui, tray → alert_manager
 calibration_request_topic: OrbTopic | None = None  # ui → fatigue_detector
-guardian_result_topic: OrbTopic | None = None  # code_guardian → ui, session_logger
+guardian_result_topic: OrbTopic | None = None  # code_guardian → ui, alert_manager, session_logger
 config_updated_topic: OrbTopic | None = None  # ui → fatigue_detector, alert_manager, code_guardian
 
 

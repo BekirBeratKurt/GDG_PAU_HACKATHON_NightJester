@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 from libs.alert_manager import alert_manager_task
 from libs.camera_capture import camera_capture_task
+from libs.code_guardian import code_guardian_task
 from libs.communicator import orb_advertise, topics
 from libs.config_manager import AppConfig, load_config
 from libs.device_state_tracker import device_state_tracker_task
@@ -40,6 +41,7 @@ def main() -> None:
         (face_analyzer_task, "face_analyzer_task"),
         (fatigue_detector_task, "fatigue_detector_task"),
         (alert_manager_task, "alert_manager_task"),
+        (code_guardian_task, "code_guardian_task"),
     ]
     threads = [_start_task(fn, name, stop_event, config) for fn, name in tasks]
 

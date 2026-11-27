@@ -1,2 +1,14 @@
 # Sanal ortam
 .venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Araç önbellekleri
+.pytest_cache/
+.ruff_cache/
+
+# Kullanıcıya özel ayarlar ve oturum verisi
+config/user_config.json
+data/

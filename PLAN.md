@@ -285,6 +285,7 @@ GDG_PAU_HACKATHON_NightJester/   (proje kökü)
 
 ```python
 """NightJester giriş noktası. Sadece kurulum ve task başlatma içerir."""
+
 from __future__ import annotations
 
 import logging
@@ -295,6 +296,7 @@ from libs.communicator import topics
 from libs.config_manager import load_config
 from libs.device_state_tracker import device_state_tracker_task
 from libs.camera_capture import camera_capture_task
+
 # ... diğer modüller
 from libs.ui import run_ui
 
@@ -349,18 +351,20 @@ PX4 uORB'den esinlenmiş nORB'nin Python sürümü. Task'lar arası veri **sadec
 class OrbTopic:
     name: str
     data: Any = None
-    seq: int = 0                       # her publish'te +1
+    seq: int = 0  # her publish'te +1
     lock: threading.Lock = field(default_factory=threading.Lock)
+
 
 @dataclass
 class OrbSubscription:
     topic: OrbTopic
     last_seq: int = 0
 
+
 def orb_advertise(name: str) -> OrbTopic: ...
-def orb_publish(topic: OrbTopic, data: Any) -> bool: ...          # veriyi kopyalar, seq += 1
-def orb_subscribe(topic: OrbTopic) -> OrbSubscription: ...        # her okuyan task kendi aboneliğini alır
-def orb_copy(sub: OrbSubscription) -> tuple[bool, Any]: ...       # (yeni veri var mı, son veri)
+def orb_publish(topic: OrbTopic, data: Any) -> bool: ...  # veriyi kopyalar, seq += 1
+def orb_subscribe(topic: OrbTopic) -> OrbSubscription: ...  # her okuyan task kendi aboneliğini alır
+def orb_copy(sub: OrbSubscription) -> tuple[bool, Any]: ...  # (yeni veri var mı, son veri)
 ```
 
 - `orb_publish` veriyi `copy.copy` ile, NumPy frame'leri için `ndarray.copy()` ile kopyalar. Okuyan taraf yayınlayanın tamponunu değiştiremez.
@@ -381,20 +385,24 @@ GUARDIAN_RESULT_TOPIC = "guardian_result"
 CONFIG_UPDATED_TOPIC = "config_updated"
 
 # TOPICS (main.py'deki advertise_all_topics içinde atanır)
-frame_topic: OrbTopic | None = None                # camera_capture → face_analyzer, ui
-face_metrics_topic: OrbTopic | None = None         # face_analyzer → fatigue_detector, ui
-fatigue_state_topic: OrbTopic | None = None        # fatigue_detector → alert_manager, code_guardian, session_logger, ui
-app_mode_topic: OrbTopic | None = None             # ui, tray → fatigue_detector, alert_manager, code_guardian
-alert_command_topic: OrbTopic | None = None        # ui, tray → alert_manager
+frame_topic: OrbTopic | None = None  # camera_capture → face_analyzer, ui
+face_metrics_topic: OrbTopic | None = None  # face_analyzer → fatigue_detector, ui
+fatigue_state_topic: OrbTopic | None = (
+    None  # fatigue_detector → alert_manager, code_guardian, session_logger, ui
+)
+app_mode_topic: OrbTopic | None = None  # ui, tray → fatigue_detector, alert_manager, code_guardian
+alert_command_topic: OrbTopic | None = None  # ui, tray → alert_manager
 calibration_request_topic: OrbTopic | None = None  # ui → fatigue_detector
-guardian_result_topic: OrbTopic | None = None      # code_guardian → ui, session_logger
-config_updated_topic: OrbTopic | None = None       # ui → fatigue_detector, alert_manager, code_guardian
+guardian_result_topic: OrbTopic | None = None  # code_guardian → ui, session_logger
+config_updated_topic: OrbTopic | None = None  # ui → fatigue_detector, alert_manager, code_guardian
+
 
 # TYPES
 class AppMode(Enum):
     NORMAL = auto()
     DEADLINE = auto()
     PAUSED = auto()
+
 
 class FatigueLevel(Enum):
     AWAKE = auto()
@@ -403,31 +411,36 @@ class FatigueLevel(Enum):
     NO_FACE = auto()
     CALIBRATING = auto()
 
+
 @dataclass
 class Frame:
-    image: np.ndarray        # BGR
+    image: np.ndarray  # BGR
     timestamp_ms: int
+
 
 @dataclass
 class FaceMetrics:
     face_present: bool
-    ear: float               # iki gözün ortalaması
+    ear: float  # iki gözün ortalaması
     mar: float
     timestamp_ms: int
-    landmarks_px: np.ndarray | None = None   # önizleme overlay'i için (opsiyonel)
+    landmarks_px: np.ndarray | None = None  # önizleme overlay'i için (opsiyonel)
+
 
 @dataclass
 class FatigueState:
     level: FatigueLevel
-    score: int               # 0–100
+    score: int  # 0–100
     eyes_closed_sec: float
-    perclos: float           # 0.0–1.0
+    perclos: float  # 0.0–1.0
     ear_threshold: float
     timestamp_ms: int
 
+
 @dataclass
 class AlertCommand:
-    action: str              # "stop" | "test"
+    action: str  # "stop" | "test"
+
 
 @dataclass
 class GuardianResult:
@@ -463,12 +476,12 @@ Desen hesaplaması bu modülde yapılır. Modül, her gösterge için `on/off` d
 ```python
 class DeviceError(IntFlag):
     NO_ERROR = 0x00
-    CAMERA_INIT_ERROR = 0x01   # Kamera açılamadı
-    CAMERA_READ_ERROR = 0x02   # Kameradan frame okunamıyor (bağlantı koptu)
-    MODEL_LOAD_ERROR = 0x04    # FaceLandmarker modeli yüklenemedi
-    AUDIO_INIT_ERROR = 0x08    # pygame.mixer başlatılamadı
-    GIT_ERROR = 0x10           # Git bulunamadı / repo geçersiz
-    CONFIG_ERROR = 0x20        # Config okunamadı, varsayılana dönüldü
+    CAMERA_INIT_ERROR = 0x01  # Kamera açılamadı
+    CAMERA_READ_ERROR = 0x02  # Kameradan frame okunamıyor (bağlantı koptu)
+    MODEL_LOAD_ERROR = 0x04  # FaceLandmarker modeli yüklenemedi
+    AUDIO_INIT_ERROR = 0x08  # pygame.mixer başlatılamadı
+    GIT_ERROR = 0x10  # Git bulunamadı / repo geçersiz
+    CONFIG_ERROR = 0x20  # Config okunamadı, varsayılana dönüldü
     # 0x40                       rezerve
     # 0x80                       rezerve
 ```

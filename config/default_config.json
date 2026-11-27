@@ -1,0 +1,47 @@
+{
+  "camera": {
+    "index": 0,
+    "width_px": 640,
+    "height_px": 480,
+    "target_fps": 30
+  },
+  "face_analyzer": {
+    "model_path": "assets/models/face_landmarker.task",
+    "min_detection_confidence": 0.5
+  },
+  "fatigue_detector": {
+    "calibration_duration_sec": 5.0,
+    "ear_closed_ratio": 0.75,
+    "drowsy_closed_sec": 1.5,
+    "asleep_closed_sec": 3.0,
+    "perclos_window_sec": 60.0,
+    "perclos_drowsy_threshold": 0.25,
+    "yawn_mar_threshold": 0.6,
+    "yawn_min_duration_sec": 1.0,
+    "no_face_timeout_sec": 5.0,
+    "awake_recovery_sec": 2.0
+  },
+  "alert_manager": {
+    "normal_mode_cooldown_sec": 600,
+    "deadline_media_type": "sound",
+    "deadline_sound_path": "assets/sounds/alarm.wav",
+    "deadline_video_url": "",
+    "deadline_video_path": "",
+    "volume_start": 0.4,
+    "volume_step": 0.15,
+    "volume_step_interval_sec": 5.0
+  },
+  "code_guardian": {
+    "enabled": true,
+    "repo_paths": [],
+    "min_interval_sec": 300
+  },
+  "session_logger": {
+    "db_path": "data/sessions.db"
+  },
+  "ui": {
+    "start_mode": "NORMAL",
+    "show_landmarks": true,
+    "start_minimized": false
+  }
+}

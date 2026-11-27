@@ -28,6 +28,7 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _fatigue_sub = None
 _app_mode_sub = None
+_config_updated_sub = None
 
 
 class GitError(Exception):
@@ -169,18 +170,28 @@ class CodeGuardian:
 def code_guardian_task(stop_event: threading.Event, config: AppConfig) -> None:
     """Code guardian task'ı. Deadline modunda ASLEEP geçişinde repoları yedekler.
 
+    Repo yoksa veya kapalıysa da çalışır, böylece ayarlar ekranından eklenen repo
+    yeniden başlatmadan devreye girer.
+
     Args:
         stop_event: Uygulama kapanırken set edilen ortak olay.
         config: Uygulama ayarları.
     """
-    guardian = _init(config)
-    if guardian is None:
-        return
+    global _fatigue_sub, _app_mode_sub, _config_updated_sub
+    _fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
+    _app_mode_sub = orb_subscribe(topics.app_mode_topic)
+    _config_updated_sub = orb_subscribe(topics.config_updated_topic)
+    guardian = build_guardian(config)
 
     mode = AppMode.NORMAL
     last_level: FatigueLevel | None = None
     try:
         while not stop_event.is_set():
+            config_updated, new_config = orb_copy(_config_updated_sub)
+            if config_updated and isinstance(new_config, AppConfig):
+                log.info("Kod Koruyucu ayarları güncellendi.")
+                guardian = build_guardian(new_config)
+
             mode_updated, new_mode = orb_copy(_app_mode_sub)
             if mode_updated and isinstance(new_mode, AppMode):
                 mode = new_mode
@@ -188,7 +199,11 @@ def code_guardian_task(stop_event: threading.Event, config: AppConfig) -> None:
             updated, state = orb_copy(_fatigue_sub)
             if updated and state.level is not last_level:
                 last_level = state.level
-                if state.level is FatigueLevel.ASLEEP and mode is AppMode.DEADLINE:
+                if (
+                    guardian is not None
+                    and state.level is FatigueLevel.ASLEEP
+                    and mode is AppMode.DEADLINE
+                ):
                     log.info("Uyku tespit edildi, Kod Koruyucu devrede.")
                     for result in guardian.protect(time.monotonic(), datetime.now()):
                         orb_publish(topics.guardian_result_topic, result)
@@ -197,14 +212,20 @@ def code_guardian_task(stop_event: threading.Event, config: AppConfig) -> None:
         log.exception("Beklenmeyen hata, task sonlandırılıyor.")
 
 
-def _init(config: AppConfig) -> CodeGuardian | None:
-    global _fatigue_sub, _app_mode_sub
+def build_guardian(config: AppConfig) -> CodeGuardian | None:
+    """Ayarlara göre koruyucuyu kurar. Git veya repo yolu hatasında GIT_ERROR set eder.
+
+    Args:
+        config: Uygulama ayarları.
+
+    Returns:
+        Koruyucu, ya da kapalıysa / geçerli repo yoksa None.
+    """
     cfg = config.code_guardian
-    if not cfg.enabled:
-        log.info("Kod Koruyucu kapalı (enabled=false).")
-        return None
-    if not cfg.repo_paths:
-        log.info("Kod Koruyucu için repo eklenmemiş (code_guardian.repo_paths), pasif.")
+    if not cfg.enabled or not cfg.repo_paths:
+        clear_error(DeviceError.GIT_ERROR)
+        reason = "kapalı (enabled=false)" if not cfg.enabled else "repo eklenmemiş"
+        log.info("Kod Koruyucu pasif: %s.", reason)
         return None
 
     try:
@@ -229,8 +250,5 @@ def _init(config: AppConfig) -> CodeGuardian | None:
     if not repos:
         log.error("Geçerli repo yok, Kod Koruyucu pasif.")
         return None
-
-    _fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
-    _app_mode_sub = orb_subscribe(topics.app_mode_topic)
     log.info("Kod Koruyucu hazır (%s, %d repo).", version, len(repos))
     return CodeGuardian(repos, cfg.min_interval_sec)

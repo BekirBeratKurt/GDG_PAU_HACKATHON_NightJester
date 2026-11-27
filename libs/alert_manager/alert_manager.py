@@ -66,6 +66,7 @@ _fatigue_sub = None
 _app_mode_sub = None
 _alert_command_sub = None
 _guardian_sub = None
+_config_updated_sub = None
 _audio_ok = False
 _alarm_channel: pygame.mixer.Channel | None = None
 _voice_channel: pygame.mixer.Channel | None = None
@@ -93,6 +94,7 @@ def alert_manager_task(stop_event: threading.Event, config: AppConfig) -> None:
     _init(config)
     try:
         while not stop_event.is_set():
+            _handle_config_update()
             _handle_mode()
             _handle_commands()
             _handle_guardian_results()
@@ -125,18 +127,32 @@ def pick_random_audio_file(directory: Path) -> Path | None:
 
 
 def _init(config: AppConfig) -> None:
-    global _fatigue_sub, _app_mode_sub, _alert_command_sub, _guardian_sub
+    global _fatigue_sub, _app_mode_sub, _alert_command_sub, _guardian_sub, _config_updated_sub
     _load_settings(config)
     _fatigue_sub = orb_subscribe(topics.fatigue_state_topic)
     _app_mode_sub = orb_subscribe(topics.app_mode_topic)
     _alert_command_sub = orb_subscribe(topics.alert_command_topic)
     _guardian_sub = orb_subscribe(topics.guardian_result_topic)
+    _config_updated_sub = orb_subscribe(topics.config_updated_topic)
     update_device_state(alarm_active=False)
+    _init_audio()
+    _update_audio_error()
 
-    if _init_audio() and _check_voice_files():
+
+def _update_audio_error() -> None:
+    if _audio_ok and _check_voice_files():
         clear_error(DeviceError.AUDIO_INIT_ERROR)
     else:
         raise_error(DeviceError.AUDIO_INIT_ERROR)
+
+
+def _handle_config_update() -> None:
+    updated, config = orb_copy(_config_updated_sub)
+    if not updated or not isinstance(config, AppConfig):
+        return
+    _load_settings(config)
+    _update_audio_error()
+    log.info("Uyarı ayarları güncellendi (medya: %s).", _DEADLINE_MEDIA_TYPE)
 
 
 def _load_settings(config: AppConfig) -> None:

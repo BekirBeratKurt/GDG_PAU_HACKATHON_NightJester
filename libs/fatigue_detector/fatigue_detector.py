@@ -31,6 +31,7 @@ SCORE_FLOOR: dict[FatigueLevel, int] = {FatigueLevel.DROWSY: 60, FatigueLevel.AS
 _face_metrics_sub = None
 _app_mode_sub = None
 _calibration_request_sub = None
+_config_updated_sub = None
 
 
 class FatigueStateMachine:
@@ -336,6 +337,11 @@ def fatigue_detector_task(stop_event: threading.Event, config: AppConfig) -> Non
                 mode = new_mode
                 log.info("Mod: %s", mode.name)
 
+            config_updated, new_config = orb_copy(_config_updated_sub)
+            if config_updated and isinstance(new_config, AppConfig):
+                machine.apply_settings(new_config.fatigue_detector)
+                log.info("Tespit ayarları güncellendi.")
+
             request_updated, _ = orb_copy(_calibration_request_sub)
             if request_updated:
                 machine.start_calibration()
@@ -355,10 +361,11 @@ def fatigue_detector_task(stop_event: threading.Event, config: AppConfig) -> Non
 
 
 def _init() -> None:
-    global _face_metrics_sub, _app_mode_sub, _calibration_request_sub
+    global _face_metrics_sub, _app_mode_sub, _calibration_request_sub, _config_updated_sub
     _face_metrics_sub = orb_subscribe(topics.face_metrics_topic)
     _app_mode_sub = orb_subscribe(topics.app_mode_topic)
     _calibration_request_sub = orb_subscribe(topics.calibration_request_topic)
+    _config_updated_sub = orb_subscribe(topics.config_updated_topic)
 
 
 def _initial_mode(name: str) -> AppMode:

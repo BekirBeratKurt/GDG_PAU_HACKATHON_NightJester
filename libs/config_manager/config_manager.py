@@ -157,27 +157,60 @@ def load_config(
     return config
 
 
-def save_user_config(config: AppConfig, user_path: Path = USER_CONFIG_PATH) -> bool:
-    """Ayarları kullanıcı ayar dosyasına yazar (ayarlar ekranı kullanır).
+def save_user_config(
+    config: AppConfig,
+    user_path: Path = USER_CONFIG_PATH,
+    default_path: Path = DEFAULT_CONFIG_PATH,
+) -> bool:
+    """Ayarların varsayılandan farklı olan kısmını kullanıcı ayar dosyasına yazar.
+
+    Sadece fark yazıldığı için ileride değişen varsayılanlar, kullanıcının dokunmadığı
+    ayarlara yansımaya devam eder.
 
     Args:
         config: Kaydedilecek ayarlar.
         user_path: Kullanıcı ayar dosyası.
+        default_path: Varsayılan ayar dosyası.
 
     Returns:
         Yazma başarılıysa True.
     """
     try:
+        defaults = _read_json(default_path)
+        diff = config_diff(defaults, asdict(config))
         user_path.parent.mkdir(parents=True, exist_ok=True)
         user_path.write_text(
-            json.dumps(asdict(config), indent=JSON_INDENT, ensure_ascii=False),
+            json.dumps(diff, indent=JSON_INDENT, ensure_ascii=False) + "\n",
             encoding=CONFIG_ENCODING,
         )
-    except OSError as err:
+    except (OSError, json.JSONDecodeError) as err:
         log.error("Kullanıcı ayarları kaydedilemedi: %s", err)
         return False
     log.info("Kullanıcı ayarları kaydedildi: %s", user_path)
     return True
+
+
+def config_diff(defaults: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
+    """İki ayar sözlüğü arasında, varsayılandan farklı olan değerleri döner.
+
+    Args:
+        defaults: Varsayılan ayarlar (bölüm → anahtar → değer).
+        values: Karşılaştırılacak ayarlar.
+
+    Returns:
+        Sadece farklı değerleri içeren bölüm → anahtar → değer sözlüğü.
+    """
+    diff: dict[str, Any] = {}
+    for section, section_values in values.items():
+        section_defaults = defaults.get(section, {})
+        changed = {
+            key: value
+            for key, value in section_values.items()
+            if section_defaults.get(key) != value
+        }
+        if changed:
+            diff[section] = changed
+    return diff
 
 
 def project_path(path: str | Path) -> Path:

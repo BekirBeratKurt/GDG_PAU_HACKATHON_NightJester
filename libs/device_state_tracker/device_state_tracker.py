@@ -82,6 +82,7 @@ _lock = threading.Lock()
 _error_mask: DeviceError = DeviceError.NO_ERROR
 _device_state = DeviceState()
 _indicator_states: dict[Indicator, bool] = dict.fromkeys(Indicator, False)
+_lamp_test_until_ms = 0
 
 
 def raise_error(error: DeviceError) -> None:
@@ -163,6 +164,13 @@ def update_device_state(**changes: Any) -> None:
         _device_state = dataclasses.replace(_device_state, **changes)
 
 
+def request_lamp_test() -> None:
+    """Tüm göstergeleri LAMP_TEST_MS boyunca yakar (pencere açıldığında görünsün diye)."""
+    global _lamp_test_until_ms
+    with _lock:
+        _lamp_test_until_ms = _now_ms() + LAMP_TEST_MS
+
+
 def get_indicator_states() -> dict[Indicator, bool]:
     """Her göstergenin şu anki yanık/sönük durumunu döner. UI her döngüde okur."""
     with _lock:
@@ -202,17 +210,25 @@ def device_state_tracker_task(stop_event: threading.Event, config: AppConfig) ->
         config: Uygulama ayarları (bu modül kullanmaz, task imzası için alınır).
     """
     try:
-        _set_indicator_states(dict.fromkeys(Indicator, True))
-        stop_event.wait(LAMP_TEST_MS / MS_PER_SEC)
+        request_lamp_test()
         while not stop_event.is_set():
-            now_ms = time.monotonic_ns() // 1_000_000
-            _set_indicator_states(compute_indicator_states(get_error_mask(), now_ms))
+            now_ms = _now_ms()
+            with _lock:
+                lamp_test_active = now_ms < _lamp_test_until_ms
+            if lamp_test_active:
+                _set_indicator_states(dict.fromkeys(Indicator, True))
+            else:
+                _set_indicator_states(compute_indicator_states(get_error_mask(), now_ms))
             stop_event.wait(LOOP_PERIOD_SEC)
     except Exception:
         log.exception("Beklenmeyen hata, task sonlandırılıyor.")
     finally:
         _set_indicator_states(dict.fromkeys(Indicator, False))
         log.info("Task durdu.")
+
+
+def _now_ms() -> int:
+    return time.monotonic_ns() // 1_000_000
 
 
 def _set_indicator_states(states: dict[Indicator, bool]) -> None:

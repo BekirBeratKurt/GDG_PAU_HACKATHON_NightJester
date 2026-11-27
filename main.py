@@ -14,6 +14,7 @@ from libs.config_manager import AppConfig, load_config
 from libs.device_state_tracker import device_state_tracker_task
 from libs.face_analyzer import face_analyzer_task
 from libs.fatigue_detector import fatigue_detector_task
+from libs.session_logger import session_logger_task
 from libs.ui import run_ui
 
 TAG = "Main"
@@ -42,6 +43,7 @@ def main() -> None:
         (fatigue_detector_task, "fatigue_detector_task"),
         (alert_manager_task, "alert_manager_task"),
         (code_guardian_task, "code_guardian_task"),
+        (session_logger_task, "session_logger_task"),
     ]
     threads = [_start_task(fn, name, stop_event, config) for fn, name in tasks]
 

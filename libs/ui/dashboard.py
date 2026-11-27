@@ -12,6 +12,9 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from libs.communicator.topics import AppMode, FaceMetrics, FatigueLevel, FatigueState
+from libs.device_state_tracker import DeviceError, Indicator
+
+from .widgets import EarGraph, IndicatorBar
 
 PADDING_PX = 10
 PREVIEW_BG = "#1a1a1a"
@@ -31,6 +34,9 @@ TEXT_WAITING_STATE = "Durum bekleniyor…"
 TEXT_CALIBRATE_BUTTON = "Kalibre et"
 TEXT_TEST_ALARM_BUTTON = "Test alarmı"
 TEXT_WAKE_BUTTON = "Uyandım"
+TEXT_SETTINGS_BUTTON = "Ayarlar"
+TEXT_REPORT_BUTTON = "Rapor"
+SECONDARY_BUTTON_WIDTH_PX = 90
 TEXT_CALIBRATING_HINT = "Ekrana normal şekilde bak, gözlerini açık tut."
 
 MODE_LABELS: dict[AppMode, str] = {
@@ -62,6 +68,8 @@ class DashboardCallbacks:
     on_mode_change: Callable[[AppMode], None]
     on_wake: Callable[[], None]
     on_test_alarm: Callable[[], None]
+    on_settings: Callable[[], None]
+    on_report: Callable[[], None]
 
 
 class Dashboard(ctk.CTkFrame):
@@ -113,7 +121,10 @@ class Dashboard(ctk.CTkFrame):
             fg=PREVIEW_TEXT_COLOR,
             compound="center",
         )
-        self._preview.pack(padx=PADDING_PX, pady=PADDING_PX)
+        self._preview.pack(padx=PADDING_PX, pady=(PADDING_PX, 0))
+
+        self._ear_graph = EarGraph(self)
+        self._ear_graph.pack(padx=PADDING_PX, pady=(2, PADDING_PX))
 
         self._metrics_label = ctk.CTkLabel(
             self, text=TEXT_WAITING_ANALYSIS, font=ctk.CTkFont(size=METRICS_FONT_SIZE)
@@ -139,6 +150,38 @@ class Dashboard(ctk.CTkFrame):
             self._wake_button.cget("fg_color"),
             self._wake_button.cget("hover_color"),
         )
+        for text, command in (
+            (TEXT_SETTINGS_BUTTON, callbacks.on_settings),
+            (TEXT_REPORT_BUTTON, callbacks.on_report),
+        ):
+            ctk.CTkButton(
+                buttons,
+                text=text,
+                command=command,
+                width=SECONDARY_BUTTON_WIDTH_PX,
+                fg_color="transparent",
+                border_width=1,
+            ).pack(side="left", padx=PADDING_PX)
+
+        self._indicators = IndicatorBar(self)
+        self._indicators.pack(padx=PADDING_PX, pady=(0, PADDING_PX))
+
+    def show_indicators(self, states: dict[Indicator, bool], mask: DeviceError) -> None:
+        """Durum göstergelerini ve aktif hataları gösterir.
+
+        Args:
+            states: Gösterge → yanık mı.
+            mask: Aktif hata bitmask'i.
+        """
+        self._indicators.show(states, mask)
+
+    def set_show_landmarks(self, show: bool) -> None:
+        """Göz/ağız noktalarının çizilip çizilmeyeceğini değiştirir.
+
+        Args:
+            show: Çizilsin mi.
+        """
+        self._show_landmarks = show
 
     def show_guardian_info(self, text: str, ok: bool = True) -> None:
         """Kod Koruyucu bilgisini (son snapshot veya durum) gösterir.
@@ -187,6 +230,7 @@ class Dashboard(ctk.CTkFrame):
             self._detail_label.configure(text="")
             return
         label, color = LEVEL_DISPLAY[state.level]
+        self._ear_graph.set_threshold(state.ear_threshold)
         if state.level is FatigueLevel.CALIBRATING:
             self._status_label.configure(text=label, text_color=color)
             self._detail_label.configure(text=TEXT_CALIBRATING_HINT)
@@ -241,3 +285,5 @@ class Dashboard(ctk.CTkFrame):
         else:
             text = f"EAR: {metrics.ear:.3f}    MAR: {metrics.mar:.3f}"
         self._metrics_label.configure(text=text)
+        if metrics is not None:
+            self._ear_graph.push(metrics.ear if metrics.face_present else None)

@@ -12,6 +12,7 @@ from .device_state_tracker import (
     get_error_status,
     get_indicator_states,
     raise_error,
+    request_lamp_test,
     update_device_state,
 )
 
@@ -27,5 +28,6 @@ __all__ = [
     "get_error_status",
     "get_indicator_states",
     "raise_error",
+    "request_lamp_test",
     "update_device_state",
 ]

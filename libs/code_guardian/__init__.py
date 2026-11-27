@@ -3,6 +3,7 @@
 from .code_guardian import (
     CodeGuardian,
     GitError,
+    build_guardian,
     code_guardian_task,
     is_git_repo,
     run_git,
@@ -12,6 +13,7 @@ from .code_guardian import (
 __all__ = [
     "CodeGuardian",
     "GitError",
+    "build_guardian",
     "code_guardian_task",
     "is_git_repo",
     "run_git",

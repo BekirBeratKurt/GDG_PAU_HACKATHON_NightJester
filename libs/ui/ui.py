@@ -13,10 +13,19 @@ import customtkinter as ctk
 
 from libs.communicator import orb_copy, orb_publish, orb_subscribe, topics
 from libs.communicator.topics import AlertCommand, AppMode, FatigueLevel, GuardianResult
-from libs.config_manager import AppConfig
-from libs.device_state_tracker import DeviceError, get_device_state, get_error_mask
+from libs.config_manager import AppConfig, save_user_config
+from libs.device_state_tracker import (
+    DeviceError,
+    get_device_state,
+    get_error_mask,
+    get_indicator_states,
+    request_lamp_test,
+)
+from libs.session_logger import get_hourly_report
 
 from .dashboard import Dashboard, DashboardCallbacks
+from .report_view import ReportWindow
+from .settings_view import SettingsWindow
 from .tray import Tray, TrayCallbacks
 
 TAG = "UI"
@@ -59,6 +68,8 @@ class _App:
         self._camera_lost = False
         # Tray thread'i Tk'ye dokunamaz. İsteği bu olayla bırakır, tick ana thread'de işler.
         self._show_request = threading.Event()
+        self._settings_window: SettingsWindow | None = None
+        self._report_window: ReportWindow | None = None
 
         ctk.set_appearance_mode(APPEARANCE_MODE)
         self._root = ctk.CTk()
@@ -72,6 +83,8 @@ class _App:
                 on_mode_change=_publish_mode,
                 on_wake=_request_alarm_stop,
                 on_test_alarm=_request_test_alarm,
+                on_settings=self._open_settings,
+                on_report=self._open_report,
             ),
         )
         self._dashboard.pack(fill="both", expand=True)
@@ -110,6 +123,8 @@ class _App:
             self._hide_window()
 
         self._root.after(UI_PERIOD_MS, self._tick)
+        # Görev başlarken yapılan lamba testi pencere açılmadan bitebiliyor, burada tekrarlanır.
+        request_lamp_test()
         log.info("Arayüz açıldı.")
         try:
             self._root.mainloop()
@@ -139,8 +154,34 @@ class _App:
                 _guardian_result_text(guardian_result), ok=guardian_result.success
             )
         self._dashboard.show_alarm_active(get_device_state().alarm_active)
-        self._tray.update(self._level, self._mode, get_error_mask() != DeviceError.NO_ERROR)
+        error_mask = get_error_mask()
+        self._dashboard.show_indicators(get_indicator_states(), error_mask)
+        self._tray.update(self._level, self._mode, error_mask != DeviceError.NO_ERROR)
         self._root.after(UI_PERIOD_MS, self._tick)
+
+    def _open_settings(self) -> None:
+        if self._settings_window is not None and self._settings_window.winfo_exists():
+            self._settings_window.lift()
+            self._settings_window.focus_force()
+            return
+        self._settings_window = SettingsWindow(self._root, self._config, self._save_settings)
+
+    def _save_settings(self, new_config: AppConfig) -> bool:
+        if not save_user_config(new_config):
+            return False
+        self._config = new_config
+        orb_publish(topics.config_updated_topic, new_config)
+        self._dashboard.set_show_landmarks(new_config.ui.show_landmarks)
+        self._dashboard.show_guardian_info(_initial_guardian_text(new_config))
+        log.info("Ayarlar kaydedildi ve yayınlandı.")
+        return True
+
+    def _open_report(self) -> None:
+        if self._report_window is not None and self._report_window.winfo_exists():
+            self._report_window.refresh()
+            self._report_window.lift()
+            return
+        self._report_window = ReportWindow(self._root, get_hourly_report)
 
     def _update_mode(self) -> None:
         updated, mode = orb_copy(self._mode_sub)

@@ -187,16 +187,19 @@ class Dashboard(ctk.CTkFrame):
             self._detail_label.configure(text="")
             return
         label, color = LEVEL_DISPLAY[state.level]
-        self._status_label.configure(text=label, text_color=color)
         if state.level is FatigueLevel.CALIBRATING:
-            detail = TEXT_CALIBRATING_HINT
-        else:
-            detail = (
+            self._status_label.configure(text=label, text_color=color)
+            self._detail_label.configure(text=TEXT_CALIBRATING_HINT)
+            return
+        self._status_label.configure(text=f"{label}  ·  Skor {state.score}", text_color=color)
+        self._detail_label.configure(
+            text=(
                 f"Eşik: {state.ear_threshold:.3f}    "
                 f"Kapalı göz: {state.eyes_closed_sec:.1f} sn    "
-                f"Skor: {state.score}"
+                f"PERCLOS: %{state.perclos * 100:.0f}    "
+                f"Esneme: {state.yawn_count}"
             )
-        self._detail_label.configure(text=detail)
+        )
 
     def show_frame(self, image_bgr: np.ndarray, metrics: FaceMetrics | None) -> None:
         """Kareyi (gerekirse overlay ile) önizlemede gösterir.

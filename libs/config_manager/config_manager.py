@@ -50,7 +50,10 @@ class FatigueConfig:
     perclos_drowsy_threshold: float
     yawn_mar_threshold: float
     yawn_min_duration_sec: float
+    yawn_window_sec: float
+    yawn_count_drowsy: int
     no_face_timeout_sec: float
+    head_drop_no_face_sec: float
     awake_recovery_sec: float
 
 

@@ -79,6 +79,7 @@ class FatigueState:
     perclos: float  # 0.0–1.0
     ear_threshold: float
     timestamp_ms: int
+    yawn_count: int = 0  # son yawn_window_sec içindeki esneme sayısı
 
 
 @dataclass

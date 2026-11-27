@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import threading
+from collections import deque
 
 import numpy as np
 
@@ -20,6 +21,12 @@ LOOP_PERIOD_SEC = 0.1
 MS_PER_SEC = 1000.0
 MIN_CALIBRATION_SAMPLES = 20
 SCORE_MAX = 100
+# Skor ağırlıkları (toplam 1). Kapalı göz en güçlü işaret olduğu için en yüksek ağırlıkta.
+SCORE_WEIGHT_CLOSED = 0.5
+SCORE_WEIGHT_PERCLOS = 0.3
+SCORE_WEIGHT_YAWN = 0.2
+# Seviye için en düşük skor: panelde "Uykulu" yazarken skorun düşük görünmemesi için.
+SCORE_FLOOR: dict[FatigueLevel, int] = {FatigueLevel.DROWSY: 60, FatigueLevel.ASLEEP: 100}
 
 _face_metrics_sub = None
 _app_mode_sub = None
@@ -29,6 +36,7 @@ _calibration_request_sub = None
 class FatigueStateMachine:
     """Yüz ölçümlerinden yorgunluk seviyesini çıkaran durum makinesi.
 
+    İşaretler: kesintisiz kapalı göz süresi, PERCLOS, esneme sayısı ve yüzün kaybolması.
     Zaman olarak ölçümlerin kendi zaman damgası kullanılır, böylece sentetik dizilerle
     test edilebilir. Thread-safe değildir, tek bir task'tan kullanılır.
     """
@@ -46,6 +54,13 @@ class FatigueStateMachine:
         self._calibration_start_ms: int | None = None
         self._closed_since_ms: int | None = None
         self._open_since_ms: int | None = None
+        self._face_missing_since_ms: int | None = None
+        self._perclos_samples: deque[tuple[int, bool]] = deque()
+        self._perclos_start_ms: int | None = None
+        self._yawn_times_ms: deque[int] = deque()
+        self._mouth_open_since_ms: int | None = None
+        self._yawn_counted = False
+        self._now_ms = 0
         self.start_calibration()
 
     @property
@@ -58,6 +73,26 @@ class FatigueStateMachine:
         """Kalibrasyonla belirlenen göz kapalı eşiği (kalibrasyon yoksa 0)."""
         return self._ear_threshold
 
+    @property
+    def perclos(self) -> float:
+        """Pencere içinde gözlerin kapalı olduğu örnek oranı (0.0–1.0)."""
+        if not self._perclos_samples:
+            return 0.0
+        closed = sum(1 for _, is_closed in self._perclos_samples if is_closed)
+        return closed / len(self._perclos_samples)
+
+    @property
+    def perclos_ready(self) -> bool:
+        """PERCLOS penceresi dolu mu. Dolmadan PERCLOS tetiklemez."""
+        if self._perclos_start_ms is None:
+            return False
+        return (self._now_ms - self._perclos_start_ms) / MS_PER_SEC >= self._perclos_window_sec
+
+    @property
+    def yawn_count(self) -> int:
+        """Son yawn_window_sec içindeki esneme sayısı."""
+        return len(self._yawn_times_ms)
+
     def apply_settings(self, cfg: FatigueConfig) -> None:
         """Ayar değerlerini durum makinesinin sabitlerine bağlar.
 
@@ -69,6 +104,14 @@ class FatigueStateMachine:
         self._drowsy_closed_sec = cfg.drowsy_closed_sec
         self._asleep_closed_sec = cfg.asleep_closed_sec
         self._awake_recovery_sec = cfg.awake_recovery_sec
+        self._perclos_window_sec = cfg.perclos_window_sec
+        self._perclos_drowsy_threshold = cfg.perclos_drowsy_threshold
+        self._yawn_mar_threshold = cfg.yawn_mar_threshold
+        self._yawn_min_duration_sec = cfg.yawn_min_duration_sec
+        self._yawn_window_sec = cfg.yawn_window_sec
+        self._yawn_count_drowsy = cfg.yawn_count_drowsy
+        self._no_face_timeout_sec = cfg.no_face_timeout_sec
+        self._head_drop_no_face_sec = cfg.head_drop_no_face_sec
 
     def start_calibration(self) -> None:
         """Kalibrasyonu (yeniden) başlatır. Bitene kadar tespit yapılmaz."""
@@ -78,6 +121,11 @@ class FatigueStateMachine:
         self._calibration_start_ms = None
         self._closed_since_ms = None
         self._open_since_ms = None
+        self._face_missing_since_ms = None
+        # Eşik değiştiği için eski PERCLOS örnekleri geçersizdir.
+        self._reset_perclos()
+        self._yawn_times_ms.clear()
+        self._mouth_open_since_ms = None
 
     def update(self, metrics: FaceMetrics) -> FatigueState:
         """Yeni bir ölçümü işler ve güncel durumu döner.
@@ -89,14 +137,20 @@ class FatigueStateMachine:
             Güncel yorgunluk durumu.
         """
         now_ms = metrics.timestamp_ms
+        self._now_ms = now_ms
         if self._level is FatigueLevel.CALIBRATING:
             self._update_calibration(metrics, now_ms)
         elif metrics.face_present:
-            self._update_detection(metrics.ear, now_ms)
+            self._face_missing_since_ms = None
+            if self._level is FatigueLevel.NO_FACE:
+                self._level = FatigueLevel.AWAKE
+            eyes_closed = metrics.ear < self._ear_threshold
+            self._update_perclos(eyes_closed, now_ms)
+            self._update_yawns(metrics.mar, now_ms)
+            self._update_eyes(eyes_closed, now_ms)
+            self._apply_drowsy_signals()
         else:
-            # Yüz yokken göz süresi ölçülemez. NO_FACE ve kafa düşmesi kuralı Faz_7'de.
-            self._closed_since_ms = None
-            self._open_since_ms = None
+            self._update_face_missing(now_ms)
         return self._make_state(now_ms)
 
     def _update_calibration(self, metrics: FaceMetrics, now_ms: int) -> None:
@@ -122,8 +176,8 @@ class FatigueStateMachine:
             len(self._calibration_samples),
         )
 
-    def _update_detection(self, ear: float, now_ms: int) -> None:
-        if ear < self._ear_threshold:
+    def _update_eyes(self, eyes_closed: bool, now_ms: int) -> None:
+        if eyes_closed:
             self._open_since_ms = None
             if self._closed_since_ms is None:
                 self._closed_since_ms = now_ms
@@ -141,6 +195,68 @@ class FatigueStateMachine:
         if self._level is not FatigueLevel.AWAKE and open_sec >= self._awake_recovery_sec:
             self._level = FatigueLevel.AWAKE
 
+    def _update_perclos(self, eyes_closed: bool, now_ms: int) -> None:
+        if self._perclos_start_ms is None:
+            self._perclos_start_ms = now_ms
+        self._perclos_samples.append((now_ms, eyes_closed))
+        cutoff_ms = now_ms - self._perclos_window_sec * MS_PER_SEC
+        while self._perclos_samples and self._perclos_samples[0][0] < cutoff_ms:
+            self._perclos_samples.popleft()
+
+    def _reset_perclos(self) -> None:
+        self._perclos_samples.clear()
+        self._perclos_start_ms = None
+
+    def _update_yawns(self, mar: float, now_ms: int) -> None:
+        cutoff_ms = now_ms - self._yawn_window_sec * MS_PER_SEC
+        while self._yawn_times_ms and self._yawn_times_ms[0] < cutoff_ms:
+            self._yawn_times_ms.popleft()
+
+        if mar <= self._yawn_mar_threshold:
+            self._mouth_open_since_ms = None
+            return
+        if self._mouth_open_since_ms is None:
+            self._mouth_open_since_ms = now_ms
+            self._yawn_counted = False
+        open_sec = (now_ms - self._mouth_open_since_ms) / MS_PER_SEC
+        if not self._yawn_counted and open_sec >= self._yawn_min_duration_sec:
+            self._yawn_counted = True
+            self._yawn_times_ms.append(now_ms)
+            log.info("Esneme algılandı (%d / %d)", self.yawn_count, self._yawn_count_drowsy)
+
+    def _apply_drowsy_signals(self) -> None:
+        if self._level is not FatigueLevel.AWAKE:
+            return
+        # Tetikleyen kanıt tüketilir. Yoksa gözler açılıp AWAKE'e dönülünce hâlâ yüksek olan
+        # PERCLOS / esneme sayısı hemen tekrar DROWSY yapar ve durum gidip gelir.
+        if self.perclos_ready and self.perclos > self._perclos_drowsy_threshold:
+            log.info("PERCLOS eşiği aşıldı: %%%.0f", self.perclos * 100)
+            self._level = FatigueLevel.DROWSY
+            self._reset_perclos()
+        elif self.yawn_count >= self._yawn_count_drowsy:
+            log.info("Esneme eşiği aşıldı: %d esneme", self.yawn_count)
+            self._level = FatigueLevel.DROWSY
+            self._yawn_times_ms.clear()
+        else:
+            return
+        # Gözler zaten uzun süredir açık olabilir. Sıfırlanmazsa bir sonraki örnekte
+        # "açık göz ≥ awake_recovery_sec" kuralı DROWSY'yi anında geri alır.
+        self._open_since_ms = None
+
+    def _update_face_missing(self, now_ms: int) -> None:
+        self._closed_since_ms = None
+        self._open_since_ms = None
+        self._mouth_open_since_ms = None
+        if self._face_missing_since_ms is None:
+            self._face_missing_since_ms = now_ms
+        missing_sec = (now_ms - self._face_missing_since_ms) / MS_PER_SEC
+        if self._level is FatigueLevel.DROWSY and missing_sec >= self._head_drop_no_face_sec:
+            log.info("Uykulu iken yüz kayboldu, kafa düşmüş olabilir.")
+            self._level = FatigueLevel.ASLEEP
+        elif self._level is FatigueLevel.AWAKE and missing_sec >= self._no_face_timeout_sec:
+            self._level = FatigueLevel.NO_FACE
+        # ASLEEP iken yüz kaybolursa ASLEEP kalınır: kafa masada olabilir, alarm susmamalı.
+
     def _eyes_closed_sec(self, now_ms: int) -> float:
         if self._closed_since_ms is None:
             return 0.0
@@ -152,18 +268,33 @@ class FatigueStateMachine:
             level=self._level,
             score=self._score(eyes_closed_sec),
             eyes_closed_sec=eyes_closed_sec,
-            perclos=0.0,
+            perclos=self.perclos,
             ear_threshold=self._ear_threshold,
             timestamp_ms=now_ms,
+            yawn_count=self.yawn_count,
         )
 
     def _score(self, eyes_closed_sec: float) -> int:
-        # Geçici skor: sadece kapalı göz süresi. PERCLOS ve esneme ile Faz_7'de genişletilecek.
-        if self._level is FatigueLevel.ASLEEP:
-            return SCORE_MAX
-        if self._asleep_closed_sec <= 0:
+        if self._level is FatigueLevel.CALIBRATING:
             return 0
-        return int(min(1.0, eyes_closed_sec / self._asleep_closed_sec) * SCORE_MAX)
+        closed_part = _ratio(eyes_closed_sec, self._asleep_closed_sec)
+        # Pencere dolmadan PERCLOS güvenilir değil, skora katılmaz.
+        perclos_part = (
+            _ratio(self.perclos, self._perclos_drowsy_threshold) if self.perclos_ready else 0.0
+        )
+        yawn_part = _ratio(self.yawn_count, self._yawn_count_drowsy)
+        raw = (
+            SCORE_WEIGHT_CLOSED * closed_part
+            + SCORE_WEIGHT_PERCLOS * perclos_part
+            + SCORE_WEIGHT_YAWN * yawn_part
+        )
+        return max(round(raw * SCORE_MAX), SCORE_FLOOR.get(self._level, 0))
+
+
+def _ratio(value: float, limit: float) -> float:
+    if limit <= 0:
+        return 0.0
+    return min(1.0, value / limit)
 
 
 def apply_app_mode(state: FatigueState, mode: AppMode) -> FatigueState:
